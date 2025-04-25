@@ -1,0 +1,27 @@
+const pool = require('../config/database');
+
+module.exports = (requiredRole) => {
+  return async (req, res, next) => {
+    const { groupId } = req.params;
+    const userId = req.user.userId;
+    
+    try {
+      const [membership] = await pool.query(
+        'SELECT role FROM group_members WHERE group_id = ? AND user_id = ?',
+        [groupId, userId]
+      );
+      
+      if (membership.length === 0) {
+        return res.status(403).json({ success: 0, message: 'Not a group member' });
+      }
+      
+      if (requiredRole === 'admin' && membership[0].role !== 'admin') {
+        return res.status(403).json({ success: 0, message: 'Admin access required' });
+      }
+      
+      next();
+    } catch (err) {
+      res.status(500).json({ success: 0, message: 'Server error' });
+    }
+  };
+};
