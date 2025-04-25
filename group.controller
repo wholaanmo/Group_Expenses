@@ -1,0 +1,185 @@
+const groupService = require('../grp_expenses/group.service');
+const pool = require('../../config/database');
+
+module.exports = {
+  createGroup: async (req, res) => {
+    let connection; // NEWWWWWW
+    try {
+      console.log('Attempting to get database connection...');
+      connection = await pool.getConnection();
+      console.log('Connection established:', !!connection); //TEMPORARYYYYYY
+
+      const { name } = req.body;
+      console.log('Creating group with name:', name, 'for user:', req.user.userId); // TEMPORARYYYYY
+      const groupCode = await groupService.createGroup(req.user.userId, name);
+      console.log('Group created successfully. Group code:', groupCode); //TEMPORARYYYYYY
+      res.json({ success: 1, groupCode });
+    } catch (err) {
+      console.error('Error in createGroup:', err.message);
+      res.status(500).json({ success: 0, message: err.message });
+    } finally {
+      if (connection) {
+        console.log('Releasing connection...');
+        await connection.release();
+        console.log('Connection released');
+      }
+    }
+  },
+  
+  joinGroup: async (req, res) => {
+    try {
+      const { groupCode } = req.body;
+      const groupId = await groupService.joinGroup(req.user.userId, groupCode);
+      
+      res.json({ 
+        success: 1, 
+        data: {  // Wrap in data object for consistency
+          groupId: groupId,
+          groupCode: groupCode
+        }
+      });
+    } catch (err) {
+      console.error('Join group error:', err);
+      res.status(400).json({ 
+        success: 0, 
+        message: err.message 
+      });
+    }
+  },
+
+  getUserGroups: async (req, res) => {
+    try {
+      const groups = await groupService.getUserGroups(req.user.userId);
+      res.json({ success: 1, data: groups });
+    } catch (err) {
+      res.status(500).json({ success: 0, message: err.message });
+    }
+  },
+
+  getGroupInfo: async (req, res) => {
+    let connection; //NEWWWWWWWW
+    try {
+      const { groupId } = req.params;
+      const connection = await pool.getConnection();
+      
+      const [group] = await connection.query(
+        'SELECT id, group_name, group_code, created_by, created_at FROM groups WHERE id = ?',
+        [groupId]
+      );
+      
+      if (group.length === 0) {
+        return res.status(404).json({ success: 0, message: 'Group not found' });
+      }
+      
+      res.json({ success: 1, data: group[0] });
+    } catch (err) {
+      res.status(500).json({ success: 0, message: err.message });
+    } finally {
+      if (connection) connection.release();
+    }
+  },
+
+  getMembers: async (req, res) => {
+    let connection;     //NEWWWWWWWWWWWWWW
+    try {
+      const { groupId } = req.params;
+      const connection = await pool.getConnection();
+      
+      const [members] = await connection.query(
+        `SELECT u.id, u.username, u.email, gm.role 
+         FROM group_members gm
+         JOIN users u ON gm.user_id = u.id
+         WHERE gm.group_id = ?`,
+        [groupId]
+      );
+      
+      res.json({ success: 1, data: members });
+    } catch (err) {
+      res.status(500).json({ success: 0, message: err.message });
+    } finally {
+      if (connection) connection.release();
+    }
+  },
+
+  deleteGroup: async (req, res) => {
+    let connection;     //NEWWWWWWWWWWWWWW
+try {
+      const { groupId } = req.params;
+      connection = await pool.getConnection();
+      
+      await connection.beginTransaction();
+      
+      // Delete members first (foreign key constraint)
+      await connection.query(
+        'DELETE FROM group_members WHERE group_id = ?',
+        [groupId]
+      );
+      
+      // Then delete the group
+      await connection.query(
+        'DELETE FROM groups WHERE id = ?',
+        [groupId]
+      );
+      
+      await connection.commit();
+      res.json({ success: 1, message: 'Group deleted successfully' });
+    } catch (err) {
+      if (connection) await connection.rollback();
+      res.status(500).json({ success: 0, message: err.message });
+    } finally {
+      if (connection) connection.release();
+    }
+  },
+
+  inviteMember: async (req, res) => {
+    let connection; //NEWWWWWWWWWWWWW
+    try {
+      const { groupId } = req.params;
+      const { email } = req.body;
+      connection = await pool.getConnection();
+      
+      // In a real app, you would:
+      // 1. Look up user by email
+      // 2. Send invitation
+      // 3. Add to group_members if they accept
+      
+      // For now, we'll just return a success message
+      const [users] = await connection.query(
+        'SELECT id FROM users WHERE email = ?',
+        [email]
+      );
+      
+      if (users.length === 0) {
+        return res.status(404).json({ success: 0, message: 'User not found' });
+      }
+      
+      const userId = users[0].id;
+      
+      // Check if already a member
+      const [existing] = await connection.query(
+        'SELECT id FROM group_members WHERE group_id = ? AND user_id = ?',
+        [groupId, userId]
+      );
+      
+      if (existing.length > 0) {
+        return res.status(400).json({ success: 0, message: 'User already in group' });
+      }
+      
+      // Add as member
+      await connection.query(
+        'INSERT INTO group_members (group_id, user_id, role) VALUES (?, ?, ?)',
+        [groupId, userId, 'member']
+      );
+      
+      res.json({ 
+        success: 1, 
+        message: 'User added to group successfully',
+        data: { groupId, userId }
+      });
+    } catch (err) {
+      res.status(500).json({ success: 0, message: err.message });
+    } finally {
+      if (connection) connection.release();
+    }
+  }
+};
